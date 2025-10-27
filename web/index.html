@@ -508,6 +508,19 @@
         let recordingStartTime = null;
         let latestBandPowers = null; // Store latest band analysis for CSV (spectral power)
         
+        // Time-window averaging for CSV export (like the app does)
+        const CSV_WINDOW_MS = 80; // 80ms windows = 12.5 samples/sec (matches app output)
+        let currentWindowStart = 0;
+        let windowSamples = {
+            raw: [],
+            delta: [],
+            theta: [],
+            alpha: [],
+            beta: [],
+            gamma: [],
+            smr: []
+        };
+        
         // Real-time bandpass filters (one set per channel)
         let channelFilters = {
             0: null,
@@ -617,6 +630,8 @@
                 isRecording = true;
                 recordingStartTime = Date.now();
                 csvData = [];
+                currentWindowStart = 0;
+                windowSamples = { raw: [], delta: [], theta: [], alpha: [], beta: [], gamma: [], smr: [] };
                 
                 // Reset all filters to avoid initial transients
                 for (let ch = 0; ch < 3; ch++) {
@@ -693,7 +708,7 @@
         }
 
         function handleSamples(data) {
-            // Save raw samples to CSV if recording
+            // Save raw samples to CSV if recording (using time-window averaging)
             if (isRecording && data.data) {
                 const timestamp = Date.now() - recordingStartTime;
                 
@@ -712,9 +727,30 @@
                         const gammaFiltered = filters.gamma.filter(rawVoltage);
                         const smrFiltered = filters.smr.filter(rawVoltage);
                         
-                        // CSV row with real-time filtered voltages (not spectral powers!)
-                        const row = `${timestamp},${rawVoltage.toFixed(2)},${deltaFiltered.toFixed(2)},${thetaFiltered.toFixed(2)},${alphaFiltered.toFixed(2)},${betaFiltered.toFixed(2)},${gammaFiltered.toFixed(2)},${smrFiltered.toFixed(2)}`;
-                        csvData.push(row);
+                        // Add samples to current window
+                        windowSamples.raw.push(rawVoltage);
+                        windowSamples.delta.push(deltaFiltered);
+                        windowSamples.theta.push(thetaFiltered);
+                        windowSamples.alpha.push(alphaFiltered);
+                        windowSamples.beta.push(betaFiltered);
+                        windowSamples.gamma.push(gammaFiltered);
+                        windowSamples.smr.push(smrFiltered);
+                        
+                        // Check if we've completed a time window
+                        if (timestamp >= currentWindowStart + CSV_WINDOW_MS) {
+                            // Average all samples in the window
+                            const avg = (arr) => arr.reduce((sum, val) => sum + val, 0) / arr.length;
+                            
+                            if (windowSamples.raw.length > 0) {
+                                // Create CSV row with averaged values
+                                const row = `${currentWindowStart.toFixed(2)},${avg(windowSamples.raw).toFixed(2)},${avg(windowSamples.delta).toFixed(2)},${avg(windowSamples.theta).toFixed(2)},${avg(windowSamples.alpha).toFixed(2)},${avg(windowSamples.beta).toFixed(2)},${avg(windowSamples.gamma).toFixed(2)},${avg(windowSamples.smr).toFixed(2)}`;
+                                csvData.push(row);
+                            }
+                            
+                            // Move to next window
+                            currentWindowStart += CSV_WINDOW_MS;
+                            windowSamples = { raw: [], delta: [], theta: [], alpha: [], beta: [], gamma: [], smr: [] };
+                        }
                     }
                 }
             }

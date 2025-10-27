@@ -104,7 +104,7 @@ def calculate_band_powers(voltages, sampling_rate=100):
         'theta': (4, 8),
         'alpha': (8, 13),
         'beta': (13, 30),
-        'gamma': (30, 38)  # Limited by Nyquist frequency
+        'gamma': (30, 50)  # Limited by Nyquist frequency
     }
     
     # Calculate power in each band
@@ -144,41 +144,12 @@ def calculate_band_powers(voltages, sampling_rate=100):
     # Signal-to-Noise Ratio (in dB)
     snr_db = 10 * np.log10(signal_power / (noise_power + 1e-10))
     
-    # Apply 1/f normalization to account for pink noise law
-    # Lower frequencies naturally have more power in EEG
-    norm_delta = band_powers['delta'] / 10.0   # Delta is huge, scale down significantly
-    norm_theta = band_powers['theta'] / 3.0    # Theta is big, scale down moderately
-    norm_alpha = band_powers['alpha'] / 2.0    # Alpha is moderate, scale down slightly
-    norm_beta = band_powers['beta'] * 1.0      # Beta is baseline, no scaling
-    norm_gamma = band_powers['gamma'] * 5.0    # Gamma is tiny, scale up significantly
+    # Relaxation score (high alpha, low beta)
+    alpha_beta_ratio = band_powers['alpha'] / (band_powers['beta'] + 1e-10)
+    relaxation_score = min(100, alpha_beta_ratio * 20)  # Scale to 0-100
     
-    # Attention/Focus score (high beta + gamma vs delta + theta)
-    # Higher when fast waves dominate (alert, focused)
-    attention_numerator = norm_beta + norm_gamma
-    attention_denominator = attention_numerator + norm_delta + norm_theta
-    attention_score = (attention_numerator / (attention_denominator + 1e-10)) * 200
-    attention_score = min(100, max(0, attention_score))
-    
-    # Relaxation score (high alpha + moderate theta vs beta + delta)
-    # Higher when calm but awake (relaxed awareness)
-    relax_numerator = norm_alpha + 0.5 * norm_theta
-    relax_denominator = relax_numerator + norm_beta + 0.3 * norm_delta
-    relaxation_score = (relax_numerator / (relax_denominator + 1e-10)) * 200
-    relaxation_score = min(100, max(0, relaxation_score))
-    
-    # Meditation score (high alpha + theta, low beta)
-    # Higher when deeply calm (meditative state)
-    meditation_numerator = norm_alpha + norm_theta
-    meditation_denominator = meditation_numerator + norm_beta + 0.2 * norm_delta
-    meditation_score = (meditation_numerator / (meditation_denominator + 1e-10)) * 180
-    meditation_score = min(100, max(0, meditation_score))
-    
-    # Drowsiness score (high delta + theta, low alpha + beta)
-    # Higher when slow waves dominate (sleepy, unfocused)
-    drowsy_numerator = norm_delta + norm_theta
-    drowsy_denominator = drowsy_numerator + norm_alpha + norm_beta
-    drowsiness_score = (drowsy_numerator / (drowsy_denominator + 1e-10)) * 150
-    drowsiness_score = min(100, max(0, drowsiness_score))
+    # Attention/Focus score (high beta, moderate alpha)
+    attention_score = min(100, (band_powers['beta'] / (band_powers['alpha'] + band_powers['theta'] + 1e-10)) * 30)
     
     return {
         'band_powers': band_powers,
@@ -187,8 +158,8 @@ def calculate_band_powers(voltages, sampling_rate=100):
         'snr_db': snr_db,
         'relaxation_score': relaxation_score,
         'attention_score': attention_score,
-        'meditation_score': meditation_score,
-        'drowsiness_score': drowsiness_score,
+        # 'meditation_score': meditation_score,
+        # 'drowsiness_score': drowsiness_score,
         'signal_quality': 'Good' if snr_db > 10 else 'Fair' if snr_db > 5 else 'Poor',
         'dominant_band': max(band_powers.items(), key=lambda x: x[1])[0]
     }
