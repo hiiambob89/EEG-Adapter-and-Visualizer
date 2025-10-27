@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serenibrain EEG Monitor</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background: #0a0e27;
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            color: #00ff88;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            font-weight: 900;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #1a1f3a;
+            border: 2px solid #00ff88;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
+        .status.streaming {
+            background: #1a3a1f;
+            border-color: #00ff88;
+        }
+
+        .controls {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        button {
+            padding: 12px 30px;
+            margin: 0 10px;
+            font-size: 1em;
+            border: 2px solid;
+            background: #1a1f3a;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+            color: white;
+            text-transform: uppercase;
+            font-family: 'Consolas', monospace;
+        }
+
+        button.start {
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+
+        button.start:hover {
+            background: #00ff88;
+            color: #0a0e27;
+        }
+
+        button.recording {
+            border-color: #ff4444;
+            color: #ff4444;
+            animation: recording-pulse 1.5s infinite;
+        }
+
+        @keyframes recording-pulse {
+            0%, 100% { 
+                background: #1a0a0a;
+            }
+            50% { 
+                background: #2a0a0a;
+            }
+        }
+
+        button.stop {
+            border-color: #ff4444;
+            color: #ff4444;
+        }
+
+        button.stop:hover {
+            background: #ff4444;
+            color: #0a0e27;
+        }
+
+        button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(15, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #151932;
+            border: 1px solid #2a3050;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        .card.large {
+            grid-column: span 8;
+        }
+
+        .card.medium {
+            grid-column: span 6;
+        }
+
+        .card.small {
+            grid-column: span 4;
+        }
+
+        .card.mini {
+            grid-column: span 3;
+        }
+
+        .card h2 {
+            margin-bottom: 15px;
+            font-size: 1em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #00ff88;
+            border-bottom: 2px solid #2a3050;
+            padding-bottom: 10px;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .metric {
+            background: #151932;
+            border: 1px solid #2a3050;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .metric.locked-in {
+            border-color: #ff00ff;
+            background: #2a1a3a;
+            animation: glow 1s infinite alternate;
+        }
+
+        @keyframes glow {
+            from { box-shadow: 0 0 10px #ff00ff; }
+            to { box-shadow: 0 0 30px #ff00ff, 0 0 50px #ff00ff; }
+        }
+
+        .locked-in-banner {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 5em;
+            font-weight: 900;
+            color: #ff00ff;
+            text-shadow: 0 0 20px #ff00ff, 0 0 40px #ff00ff;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            z-index: 1000;
+            letter-spacing: 10px;
+        }
+
+        .locked-in-banner.show {
+            opacity: 1;
+            animation: locked-pulse 2s infinite;
+        }
+
+        @keyframes locked-pulse {
+            0%, 100% { 
+                transform: translate(-50%, -50%) scale(1);
+                text-shadow: 0 0 20px #ff00ff, 0 0 40px #ff00ff;
+            }
+            50% { 
+                transform: translate(-50%, -50%) scale(1.05);
+                text-shadow: 0 0 30px #ff00ff, 0 0 60px #ff00ff, 0 0 80px #ff00ff;
+            }
+        }
+
+        .not-locked-indicator {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 40px;
+            background: rgba(255, 68, 68, 0.2);
+            border: 2px solid #ff4444;
+            color: #ff4444;
+            font-size: 1.2em;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            z-index: 999;
+        }
+
+        .not-locked-indicator.show {
+            opacity: 1;
+            animation: warning-pulse 1.5s infinite;
+        }
+
+        @keyframes warning-pulse {
+            0%, 100% { 
+                border-color: #ff4444;
+                box-shadow: 0 0 10px #ff4444;
+            }
+            50% { 
+                border-color: #ff8888;
+                box-shadow: 0 0 20px #ff4444, 0 0 30px #ff4444;
+            }
+        }
+
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .metric-label {
+            font-size: 0.8em;
+            opacity: 0.6;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .relaxation { color: #00d4ff; }
+        .focus { color: #ff00ff; }
+        .quality { color: #00ff88; }
+
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .chart-container {
+            height: 250px;
+            margin-top: 15px;
+        }
+
+        .chart-container.tall {
+            height: 350px;
+        }
+
+        .chart-container.mini {
+            height: 150px;
+        }
+
+        .axis line,
+        .axis path {
+            stroke: #2a3050;
+            shape-rendering: crispEdges;
+        }
+
+        .axis text {
+            fill: #8892a0;
+            font-size: 10px;
+            font-family: 'Consolas', monospace;
+        }
+
+        .grid line {
+            stroke: #1a1f3a;
+            stroke-opacity: 0.5;
+            shape-rendering: crispEdges;
+        }
+
+        .axis-label {
+            fill: #00ff88;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .channel-selector {
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .channel-btn {
+            padding: 8px 16px;
+            margin: 0 5px;
+            border: 2px solid #2a3050;
+            background: #151932;
+            color: white;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-family: 'Consolas', monospace;
+            text-transform: uppercase;
+        }
+
+        .channel-btn.active {
+            background: #1a3050;
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+
+        .streaming-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #00ff88;
+            margin-right: 8px;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🧠 Serenibrain EEG Monitor</h1>
+            <div class="status" id="status">Disconnected</div>
+        </header>
+
+        <div class="controls">
+            <button class="start" id="startBtn" onclick="startStream()">Start Streaming</button>
+            <button class="stop" id="stopBtn" onclick="stopStream()" disabled>Stop Streaming</button>
+            <button class="start" id="recordBtn" onclick="toggleRecording()" disabled>🔴 Start Recording CSV</button>
+        </div>
+
+        <div class="channel-selector">
+            <button class="channel-btn active" onclick="selectChannel(0)">Channel 0</button>
+            <button class="channel-btn" onclick="selectChannel(1)">Channel 1</button>
+            <button class="channel-btn" onclick="selectChannel(2)">Channel 2</button>
+        </div>
+
+        <div class="metrics">
+            <div class="metric relaxation">
+                <div class="metric-label">Relaxation</div>
+                <div class="metric-value" id="relaxation">--</div>
+            </div>
+            <div class="metric focus" id="focusMetric">
+                <div class="metric-label">Focus</div>
+                <div class="metric-value" id="focus">--</div>
+            </div>
+            <div class="metric quality">
+                <div class="metric-label">Signal Quality</div>
+                <div class="metric-value" id="quality">--</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Dominant Band</div>
+                <div class="metric-value" id="dominant">--</div>
+            </div>
+        </div>
+
+        <div class="locked-in-banner" id="lockedInBanner">🔥 LOCKED IN 🔥</div>
+        <div class="not-locked-indicator" id="notLockedIndicator">⚠ FOCUS UP ⚠</div>
+
+        <!-- Audio for motivation when not locked in -->
+        <audio id="motivationAudio" loop>
+            <source src="/audio/ttsMP3.com_VoiceText_2025-10-26_22-45-26.mp3" type="audio/mpeg">
+        </audio>
+
+        <div class="dashboard">
+            <!-- Individual Band Mini Graphs -->
+            <div class="card mini">
+                <h2>Delta (0.5-4 Hz)</h2>
+                <div class="chart-container mini" id="deltaChart"></div>
+            </div>
+            <div class="card mini">
+                <h2>Theta (4-8 Hz)</h2>
+                <div class="chart-container mini" id="thetaChart"></div>
+            </div>
+            <div class="card mini">
+                <h2>Alpha (8-13 Hz)</h2>
+                <div class="chart-container mini" id="alphaChart"></div>
+            </div>
+            <div class="card mini">
+                <h2>Beta (13-30 Hz)</h2>
+                <div class="chart-container mini" id="betaChart"></div>
+            </div>
+            <div class="card mini">
+                <h2>Gamma (30-38 Hz)</h2>
+                <div class="chart-container mini" id="gammaChart"></div>
+            </div>
+            
+            <!-- Main Charts -->
+            <div class="card large">
+                <h2>Band Powers Over Time (Normalized)</h2>
+                <div class="chart-container tall" id="bandTimeSeries"></div>
+            </div>
+
+            <div class="card small">
+                <h2>Band Ratios (%)</h2>
+                <div class="chart-container" id="bandRatios"></div>
+            </div>
+
+            <div class="card medium">
+                <h2>Relaxation vs Focus</h2>
+                <div class="chart-container" id="relaxFocusChart"></div>
+            </div>
+
+            <div class="card medium">
+                <h2>Frequency Spectrum (Absolute Power)</h2>
+                <div class="chart-container" id="spectrumChart"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // ===== REAL-TIME IIR BANDPASS FILTERS FOR CSV EXPORT =====
+        // Implements 2nd order Butterworth bandpass filters for each frequency band
+        // This allows us to extract filtered voltage values per sample (like the official app)
+        
+        class ButterworthBandpass {
+            constructor(lowFreq, highFreq, sampleRate = 77.88) {
+                this.lowFreq = lowFreq;
+                this.highFreq = highFreq;
+                this.sampleRate = sampleRate;
+                
+                // Calculate filter coefficients
+                const nyquist = sampleRate / 2.0;
+                const lowNorm = lowFreq / nyquist;
+                const highNorm = highFreq / nyquist;
+                const centerNorm = Math.sqrt(lowNorm * highNorm);
+                const bandwidthNorm = highNorm - lowNorm;
+                
+                // Second-order Butterworth bandpass
+                const omega = 2 * Math.PI * centerNorm;
+                const alpha = Math.sin(omega) * Math.sinh(Math.log(2) / 2 * bandwidthNorm * omega / Math.sin(omega));
+                
+                // Filter coefficients (biquad form)
+                const a0 = 1 + alpha;
+                this.b0 = alpha / a0;
+                this.b1 = 0;
+                this.b2 = -alpha / a0;
+                this.a1 = -2 * Math.cos(omega) / a0;
+                this.a2 = (1 - alpha) / a0;
+                
+                // State variables for filtering
+                this.x1 = 0; // input[n-1]
+                this.x2 = 0; // input[n-2]
+                this.y1 = 0; // output[n-1]
+                this.y2 = 0; // output[n-2]
+            }
+            
+            filter(input) {
+                // Apply biquad filter equation
+                const output = this.b0 * input + this.b1 * this.x1 + this.b2 * this.x2
+                             - this.a1 * this.y1 - this.a2 * this.y2;
+                
+                // Update state
+                this.x2 = this.x1;
+                this.x1 = input;
+                this.y2 = this.y1;
+                this.y1 = output;
+                
+                return output;
+            }
+            
+            reset() {
+                this.x1 = this.x2 = this.y1 = this.y2 = 0;
+            }
+        }
+        
+        // ===== MAIN APPLICATION STATE =====
+        let ws = null;
+        let currentChannel = 0;
+        let bandHistory = {
+            delta: [], theta: [], alpha: [], beta: [], gamma: []
+        };
+        let relaxFocusHistory = [];
+        const maxHistoryPoints = 50;
+        let isLockedIn = false;
+        let motivationAudio = null;
+        let isRecording = false;
+        let csvData = [];
+        let recordingStartTime = null;
+        let latestBandPowers = null; // Store latest band analysis for CSV (spectral power)
+        
+        // Real-time bandpass filters (one set per channel)
+        let channelFilters = {
+            0: null,
+            1: null,
+            2: null
+        };
+        
+        function initializeFilters() {
+            // Initialize filters for each channel
+            for (let ch = 0; ch < 3; ch++) {
+                channelFilters[ch] = {
+                    delta: new ButterworthBandpass(0.5, 4),
+                    theta: new ButterworthBandpass(4, 8),
+                    alpha: new ButterworthBandpass(8, 13),
+                    beta: new ButterworthBandpass(13, 30),
+                    gamma: new ButterworthBandpass(30, 38),
+                    smr: new ButterworthBandpass(12, 15)
+                };
+            }
+        }
+        
+        // Initialize filters on page load
+        initializeFilters();
+
+        // Color scheme for bands
+        const bandColors = {
+            delta: '#e91e63',
+            theta: '#9c27b0',
+            alpha: '#2196f3',
+            beta: '#4caf50',
+            gamma: '#ff9800'
+        };
+
+        // Initialize audio on first user interaction
+        document.addEventListener('click', function initAudio() {
+            if (!motivationAudio) {
+                motivationAudio = document.getElementById('motivationAudio');
+                motivationAudio.volume = 0.3; // Set volume to 30%
+            }
+            document.removeEventListener('click', initAudio);
+        }, { once: true });
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                
+                if (message.type === 'status') {
+                    handleStatus(message.data);
+                } else if (message.type === 'samples') {
+                    handleSamples(message);
+                } else if (message.type === 'analysis') {
+                    handleAnalysis(message.data);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                setTimeout(connectWebSocket, 2000);
+            };
+        }
+
+        function startStream() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'start' }));
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                document.getElementById('recordBtn').disabled = false;
+            }
+        }
+
+        function stopStream() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'stop' }));
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('recordBtn').disabled = true;
+                
+                // Stop recording if active
+                if (isRecording) {
+                    toggleRecording();
+                }
+                
+                // Stop audio when streaming stops
+                if (motivationAudio && !motivationAudio.paused) {
+                    motivationAudio.pause();
+                    motivationAudio.currentTime = 0;
+                }
+                
+                // Hide indicators
+                document.getElementById('lockedInBanner').classList.remove('show');
+                document.getElementById('notLockedIndicator').classList.remove('show');
+            }
+        }
+
+        function toggleRecording() {
+            const recordBtn = document.getElementById('recordBtn');
+            
+            if (!isRecording) {
+                // Start recording
+                isRecording = true;
+                recordingStartTime = Date.now();
+                csvData = [];
+                
+                // Reset all filters to avoid initial transients
+                for (let ch = 0; ch < 3; ch++) {
+                    if (channelFilters[ch]) {
+                        channelFilters[ch].delta.reset();
+                        channelFilters[ch].theta.reset();
+                        channelFilters[ch].alpha.reset();
+                        channelFilters[ch].beta.reset();
+                        channelFilters[ch].gamma.reset();
+                        channelFilters[ch].smr.reset();
+                    }
+                }
+                
+                recordBtn.textContent = '⏹ Stop Recording';
+                recordBtn.classList.add('recording');
+                recordBtn.classList.remove('start');
+                console.log('📊 Started CSV recording with real-time bandpass filtering');
+            } else {
+                // Stop recording and download
+                isRecording = false;
+                recordBtn.textContent = '🔴 Start Recording CSV';
+                recordBtn.classList.remove('recording');
+                recordBtn.classList.add('start');
+                downloadCSV();
+                console.log('📊 Stopped CSV recording');
+            }
+        }
+
+        function downloadCSV() {
+            if (csvData.length === 0) {
+                console.log('No data to download');
+                return;
+            }
+
+            // Create CSV header
+            const header = 'Practice Timestamp (ms),Raw Brainwaves Voltage(µV),Delta Brainwave Voltage(µV),Theta Brainwave Voltage(µV),Alpha Brainwave Voltage(µV),Beta Brainwave Voltage(µV),Gamma Brainwave Voltage(µV),SMR Brainwave Voltage(µV)\n';
+            
+            // Create CSV content
+            const csv = header + csvData.join('\n');
+            
+            // Create blob and download
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `eeg_recording_${new Date().toISOString().replace(/:/g, '-')}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            console.log(`📊 Downloaded ${csvData.length} samples`);
+        }
+
+        function selectChannel(channel) {
+            currentChannel = channel;
+            document.querySelectorAll('.channel-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        function handleStatus(data) {
+            const statusEl = document.getElementById('status');
+            
+            if (data.status === 'streaming') {
+                statusEl.innerHTML = '<span class="streaming-indicator"></span>Streaming from ' + data.device;
+                statusEl.className = 'status streaming';
+            } else if (data.status === 'stopped') {
+                statusEl.innerHTML = 'Disconnected';
+                statusEl.className = 'status';
+            } else if (data.status === 'error') {
+                statusEl.innerHTML = 'Error: ' + data.message;
+                statusEl.className = 'status';
+            }
+        }
+
+        function handleSamples(data) {
+            // Save raw samples to CSV if recording
+            if (isRecording && data.data) {
+                const timestamp = Date.now() - recordingStartTime;
+                
+                // Record each sample from the packet
+                for (const sample of data.data) {
+                    if (sample.channel === currentChannel) {
+                        // Apply real-time bandpass filters to get filtered voltages (µV)
+                        const filters = channelFilters[currentChannel];
+                        const rawVoltage = sample.voltage_uv;
+                        
+                        // Filter the raw voltage through each band filter
+                        const deltaFiltered = filters.delta.filter(rawVoltage);
+                        const thetaFiltered = filters.theta.filter(rawVoltage);
+                        const alphaFiltered = filters.alpha.filter(rawVoltage);
+                        const betaFiltered = filters.beta.filter(rawVoltage);
+                        const gammaFiltered = filters.gamma.filter(rawVoltage);
+                        const smrFiltered = filters.smr.filter(rawVoltage);
+                        
+                        // CSV row with real-time filtered voltages (not spectral powers!)
+                        const row = `${timestamp},${rawVoltage.toFixed(2)},${deltaFiltered.toFixed(2)},${thetaFiltered.toFixed(2)},${alphaFiltered.toFixed(2)},${betaFiltered.toFixed(2)},${gammaFiltered.toFixed(2)},${smrFiltered.toFixed(2)}`;
+                        csvData.push(row);
+                    }
+                }
+            }
+        }
+
+        function handleAnalysis(data) {
+            const channelData = data[currentChannel];
+            if (!channelData) return;
+
+            // Store latest band powers for CSV recording
+            latestBandPowers = channelData.band_powers;
+
+            const focusScore = Math.round(channelData.attention_score);
+            const relaxScore = Math.round(channelData.relaxation_score);
+
+            // Update metrics
+            document.getElementById('relaxation').textContent = relaxScore;
+            document.getElementById('focus').textContent = focusScore;
+            document.getElementById('quality').textContent = channelData.signal_quality;
+            document.getElementById('dominant').textContent = channelData.dominant_band.toUpperCase();
+
+            // LOCKED IN indicator and audio control
+            // Three states:
+            // 1. Focus > 70: LOCKED IN (no audio)
+            // 2. Focus 40-70: Normal (no alerts, no audio) 
+            // 3. Focus < 40: FOCUS UP warning + audio plays
+            const focusMetric = document.getElementById('focusMetric');
+            const lockedInBanner = document.getElementById('lockedInBanner');
+            const notLockedIndicator = document.getElementById('notLockedIndicator');
+            
+            if (focusScore > 70) {
+                // HIGH FOCUS - LOCKED IN state
+                if (!isLockedIn) {
+                    isLockedIn = true;
+                    console.log('🔥 LOCKED IN!');
+                }
+                
+                focusMetric.classList.add('locked-in');
+                lockedInBanner.classList.add('show');
+                notLockedIndicator.classList.remove('show');
+                
+                // Stop audio when locked in
+                if (motivationAudio && !motivationAudio.paused) {
+                    motivationAudio.pause();
+                    motivationAudio.currentTime = 0;
+                }
+            } else if (focusScore >= 40) {
+                // MEDIUM FOCUS - Normal state (no alerts)
+                if (isLockedIn) {
+                    isLockedIn = false;
+                    console.log('📊 Normal focus');
+                }
+                
+                focusMetric.classList.remove('locked-in');
+                lockedInBanner.classList.remove('show');
+                notLockedIndicator.classList.remove('show');
+                
+                // Stop audio in normal state
+                if (motivationAudio && !motivationAudio.paused) {
+                    motivationAudio.pause();
+                    motivationAudio.currentTime = 0;
+                }
+            } else {
+                // LOW FOCUS - Warning state
+                if (isLockedIn) {
+                    isLockedIn = false;
+                    console.log('⚠ Low focus - need motivation');
+                }
+                
+                focusMetric.classList.remove('locked-in');
+                lockedInBanner.classList.remove('show');
+                notLockedIndicator.classList.add('show');
+                
+                // Play motivation audio ONLY in low focus state
+                if (motivationAudio && motivationAudio.paused) {
+                    motivationAudio.play().catch(e => {
+                        console.log('Audio autoplay blocked - click anywhere to enable');
+                    });
+                }
+            }
+
+            // Update band history
+            for (const band in bandColors) {
+                bandHistory[band].push(channelData.band_ratios[band]);
+                if (bandHistory[band].length > maxHistoryPoints) {
+                    bandHistory[band].shift();
+                }
+            }
+
+            // Update relax/focus history
+            relaxFocusHistory.push({
+                relax: channelData.relaxation_score,
+                focus: channelData.attention_score
+            });
+            if (relaxFocusHistory.length > maxHistoryPoints) {
+                relaxFocusHistory.shift();
+            }
+
+            // Update visualizations
+            updateBandRatios(channelData.band_ratios);
+            updateBandTimeSeries();
+            updateRelaxFocusChart();
+            updateSpectrumChart(channelData.band_powers);
+            updateIndividualBandCharts();
+        }
+
+        function updateBandRatios(ratios) {
+            const container = d3.select('#bandRatios');
+            container.selectAll('*').remove();
+
+            const margin = { top: 20, right: 40, bottom: 40, left: 80 };
+            const width = container.node().getBoundingClientRect().width - margin.left - margin.right;
+            const height = 250 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const bands = Object.entries(ratios).map(([name, value]) => ({ name, value }));
+
+            const x = d3.scaleLinear()
+                .domain([0, 100])
+                .range([0, width]);
+
+            const y = d3.scaleBand()
+                .domain(bands.map(d => d.name))
+                .range([0, height])
+                .padding(0.3);
+
+            // Bars
+            svg.selectAll('.bar')
+                .data(bands)
+                .join('rect')
+                .attr('x', 0)
+                .attr('y', d => y(d.name))
+                .attr('width', d => x(d.value))
+                .attr('height', y.bandwidth())
+                .attr('fill', d => bandColors[d.name]);
+
+            // Labels
+            svg.selectAll('.label')
+                .data(bands)
+                .join('text')
+                .attr('x', -10)
+                .attr('y', d => y(d.name) + y.bandwidth() / 2)
+                .attr('text-anchor', 'end')
+                .attr('dominant-baseline', 'middle')
+                .attr('fill', '#00ff88')
+                .attr('font-size', '11px')
+                .attr('font-weight', 'bold')
+                .text(d => d.name.toUpperCase());
+
+            // Values
+            svg.selectAll('.value')
+                .data(bands)
+                .join('text')
+                .attr('x', d => Math.max(x(d.value) + 5, 25))
+                .attr('y', d => y(d.name) + y.bandwidth() / 2)
+                .attr('dominant-baseline', 'middle')
+                .attr('fill', 'white')
+                .attr('font-size', '11px')
+                .text(d => d.value.toFixed(1) + '%');
+
+            // X axis
+            svg.append('g')
+                .attr('class', 'axis')
+                .attr('transform', `translate(0,${height})`)
+                .call(d3.axisBottom(x).ticks(5));
+
+            // X axis label
+            svg.append('text')
+                .attr('class', 'axis-label')
+                .attr('x', width / 2)
+                .attr('y', height + 35)
+                .attr('text-anchor', 'middle')
+                .text('Percentage (%)');
+        }
+
+        function updateBandTimeSeries() {
+            const container = d3.select('#bandTimeSeries');
+            container.selectAll('*').remove();
+
+            const margin = { top: 20, right: 100, bottom: 50, left: 60 };
+            const width = container.node().getBoundingClientRect().width - margin.left - margin.right;
+            const height = 350 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleLinear()
+                .domain([0, maxHistoryPoints - 1])
+                .range([0, width]);
+
+            const y = d3.scaleLinear()
+                .domain([0, 100])
+                .range([height, 0]);
+
+            // Grid lines
+            svg.append('g')
+                .attr('class', 'grid')
+                .call(d3.axisLeft(y).tickSize(-width).tickFormat(''));
+
+            const line = d3.line()
+                .x((d, i) => x(i))
+                .y(d => y(d))
+                .curve(d3.curveMonotoneX);
+
+            // Normalize each band to 0-100 scale
+            for (const [band, data] of Object.entries(bandHistory)) {
+                if (data.length > 0) {
+                    svg.append('path')
+                        .datum(data)
+                        .attr('fill', 'none')
+                        .attr('stroke', bandColors[band])
+                        .attr('stroke-width', 2.5)
+                        .attr('d', line);
+                }
+            }
+
+            // Axes
+            svg.append('g')
+                .attr('class', 'axis')
+                .attr('transform', `translate(0,${height})`)
+                .call(d3.axisBottom(x).ticks(10));
+
+            svg.append('g')
+                .attr('class', 'axis')
+                .call(d3.axisLeft(y).ticks(5));
+
+            // Axis labels
+            svg.append('text')
+                .attr('class', 'axis-label')
+                .attr('x', width / 2)
+                .attr('y', height + 40)
+                .attr('text-anchor', 'middle')
+                .text('Time (samples)');
+
+            svg.append('text')
+                .attr('class', 'axis-label')
+                .attr('transform', 'rotate(-90)')
+                .attr('x', -height / 2)
+                .attr('y', -45)
+                .attr('text-anchor', 'middle')
+                .text('Power (%)');
+
+            // Legend
+            const legend = svg.append('g')
+                .attr('transform', `translate(${width + 10}, 0)`);
+
+            Object.entries(bandColors).forEach(([band, color], i) => {
+                const g = legend.append('g')
+                    .attr('transform', `translate(0, ${i * 20})`);
+
+                g.append('line')
+                    .attr('x1', 0).attr('x2', 20)
+                    .attr('y1', 0).attr('y2', 0)
+                    .attr('stroke', color)
+                    .attr('stroke-width', 2.5);
+
+                g.append('text')
+                    .attr('x', 25).attr('y', 0)
+                    .attr('dominant-baseline', 'middle')
+                    .attr('fill', color)
+                    .attr('font-size', '10px')
+                    .attr('font-weight', 'bold')
+                    .text(band.toUpperCase());
+            });
+        }
+
+        function updateRelaxFocusChart() {
+            const container = d3.select('#relaxFocusChart');
+            container.selectAll('*').remove();
+
+            const margin = { top: 20, right: 20, bottom: 50, left: 60 };
+            const width = container.node().getBoundingClientRect().width - margin.left - margin.right;
+            const height = 250 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleLinear()
+                .domain([0, maxHistoryPoints - 1])
+                .range([0, width]);
+
+            const y = d3.scaleLinear()
+                .domain([0, 100])
+                .range([height, 0]);
+
+            // Grid
+            svg.append('g')
+                .attr('class', 'grid')
+                .call(d3.axisLeft(y).tickSize(-width).tickFormat(''));
+
+            const relaxLine = d3.line()
+                .x((d, i) => x(i))
+                .y(d => y(d.relax))
+                .curve(d3.curveMonotoneX);
+
+            const focusLine = d3.line()
+                .x((d, i) => x(i))
+                .y(d => y(d.focus))
+                .curve(d3.curveMonotoneX);
+
+            if (relaxFocusHistory.length > 0) {
+                // Relaxation line
+                svg.append('path')
+                    .datum(relaxFocusHistory)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#00d4ff')
+                    .attr('stroke-width', 3)
+                    .attr('d', relaxLine);
+
+                // Focus line
+                svg.append('path')
+                    .datum(relaxFocusHistory)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#ff00ff')
+                    .attr('stroke-width', 3)
+                    .attr('d', focusLine);
+            }
+
+            // Axes
+            svg.append('g')
+                .attr('class', 'axis')
+                .attr('transform', `translate(0,${height})`)
+                .call(d3.axisBottom(x).ticks(10));
+
+            svg.append('g')
+                .attr('class', 'axis')
+                .call(d3.axisLeft(y).ticks(5));
+
+            // Axis labels
+            svg.append('text')
+                .attr('class', 'axis-label')
+                .attr('x', width / 2)
+                .attr('y', height + 40)
+                .attr('text-anchor', 'middle')
+                .text('Time (samples)');
+
+            svg.append('text')
+                .attr('class', 'axis-label')
+                .attr('transform', 'rotate(-90)')
+                .attr('x', -height / 2)
+                .attr('y', -45)
+                .attr('text-anchor', 'middle')
+                .text('Score (0-100)');
+
+            // Legend
+            const legend = svg.append('g')
+                .attr('transform', `translate(${width - 100}, 10)`);
+
+            legend.append('line')
+                .attr('x1', 0).attr('x2', 30)
+                .attr('y1', 0).attr('y2', 0)
+                .attr('stroke', '#00d4ff')
+                .attr('stroke-width', 3);
+
+            legend.append('text')
+                .attr('x', 35).attr('y', 0)
+                .attr('dominant-baseline', 'middle')
+                .attr('fill', '#00d4ff')
+                .attr('font-size', '11px')
+                .attr('font-weight', 'bold')
+                .text('RELAX');
+
+            legend.append('line')
+                .attr('x1', 0).attr('x2', 30)
+                .attr('y1', 20).attr('y2', 20)
+                .attr('stroke', '#ff00ff')
+                .attr('stroke-width', 3);
+
+            legend.append('text')
+                .attr('x', 35).attr('y', 20)
+                .attr('dominant-baseline', 'middle')
+                .attr('fill', '#ff00ff')
+                .attr('font-size', '11px')
+                .attr('font-weight', 'bold')
+                .text('FOCUS');
+        }
+
+        function updateSpectrumChart(powers) {
+            const container = d3.select('#spectrumChart');
+            container.selectAll('*').remove();
+
+            const margin = { top: 20, right: 20, bottom: 50, left: 70 };
+            const width = container.node().getBoundingClientRect().width - margin.left - margin.right;
+            const height = 250 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const bands = Object.entries(powers).map(([name, value]) => ({ name, value }));
+
+            const x = d3.scaleBand()
+                .domain(bands.map(d => d.name))
+                .range([0, width])
+                .padding(0.3);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(bands, d => d.value) * 1.1])
+                .range([height, 0]);
+
+            // Grid
+            svg.append('g')
+                .attr('class', 'grid')
+                .call(d3.axisLeft(y).tickSize(-width).tickFormat(''));
+
+            // Bars
+            svg.selectAll('.bar')
+                .data(bands)
+                .join('rect')
+                .attr('x', d => x(d.name))
+                .attr('y', d => y(d.value))
+                .attr('width', x.bandwidth())
+                .attr('height', d => height - y(d.value))
+                .attr('fill', d => bandColors[d.name]);
+
+            // Labels
+            svg.selectAll('.label')
+                .data(bands)
+                .join('text')
+                .attr('x', d => x(d.name) + x.bandwidth() / 2)
+                .attr('y', height + 20)
+                .attr('text-anchor', 'middle')
+                .attr('fill', '#00ff88')
+                .attr('font-size', '11px')
+                .attr('font-weight', 'bold')
+                .text(d => d.name.toUpperCase());
+
+            // Axes
+            svg.append('g')
+                .attr('class', 'axis')
+                .call(d3.axisLeft(y).ticks(5));
+
+            svg.append('text')
+                .attr('class', 'axis-label')
+                .attr('transform', 'rotate(-90)')
+                .attr('y', -55)
+                .attr('x', -height / 2)
+                .attr('text-anchor', 'middle')
+                .text('Power (µV²)');
+        }
+
+        function updateIndividualBandCharts() {
+            const bands = ['delta', 'theta', 'alpha', 'beta', 'gamma'];
+            
+            bands.forEach(band => {
+                const container = d3.select(`#${band}Chart`);
+                container.selectAll('*').remove();
+
+                const history = bandHistory[band];
+                if (!history || history.length === 0) return;
+
+                const margin = { top: 10, right: 10, bottom: 20, left: 30 };
+                const width = container.node().getBoundingClientRect().width - margin.left - margin.right;
+                const height = 150 - margin.top - margin.bottom;
+
+                const svg = container.append('svg')
+                    .attr('width', width + margin.left + margin.right)
+                    .attr('height', height + margin.top + margin.bottom)
+                    .append('g')
+                    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+                const x = d3.scaleLinear()
+                    .domain([0, history.length - 1])
+                    .range([0, width]);
+
+                const y = d3.scaleLinear()
+                    .domain([0, 100])
+                    .range([height, 0]);
+
+                // Area fill
+                const area = d3.area()
+                    .x((d, i) => x(i))
+                    .y0(height)
+                    .y1(d => y(d))
+                    .curve(d3.curveMonotoneX);
+
+                svg.append('path')
+                    .datum(history)
+                    .attr('fill', bandColors[band])
+                    .attr('fill-opacity', 0.3)
+                    .attr('d', area);
+
+                // Line
+                const line = d3.line()
+                    .x((d, i) => x(i))
+                    .y(d => y(d))
+                    .curve(d3.curveMonotoneX);
+
+                svg.append('path')
+                    .datum(history)
+                    .attr('fill', 'none')
+                    .attr('stroke', bandColors[band])
+                    .attr('stroke-width', 2)
+                    .attr('d', line);
+
+                // Axes
+                svg.append('g')
+                    .attr('class', 'axis')
+                    .attr('transform', `translate(0,${height})`)
+                    .call(d3.axisBottom(x).ticks(3));
+
+                svg.append('g')
+                    .attr('class', 'axis')
+                    .call(d3.axisLeft(y).ticks(3));
+            });
+        }
+
+        // Initialize
+        connectWebSocket();
+
+        // Refresh charts on window resize
+        window.addEventListener('resize', () => {
+            if (relaxFocusHistory.length > 0) {
+                const lastData = relaxFocusHistory[relaxFocusHistory.length - 1];
+                handleAnalysis({ [currentChannel]: lastData });
+            }
+        });
+    </script>
+</body>
+</html>

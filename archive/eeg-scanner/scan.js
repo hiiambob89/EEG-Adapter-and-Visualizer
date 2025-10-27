@@ -1,5 +1,5 @@
 // scan.js - improved BLE scanner + notifier logger
-const noble = require('@abandonware/noble');
+const noble = require('./ble-adapter');
 const fs = require('fs');
 const LOG_FILE = __dirname + '/scan_notifications.log';
 
