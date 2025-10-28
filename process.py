@@ -68,13 +68,13 @@ class EEGBuffer:
 
 
 
-def calculate_band_powers(voltages, sampling_rate=100):
+def calculate_band_powers(voltages, sampling_rate=250):  # ← FIXED
     """
     Calculate brainwave band powers using FFT
     
     Args:
         voltages: List of voltage values in microvolts
-        sampling_rate: Sampling rate in Hz (default 100 Hz per channel)
+        sampling_rate: Sampling rate in Hz (250 Hz for Sereni Brain)
     
     Returns:
         Dictionary with band powers and metrics
@@ -97,14 +97,14 @@ def calculate_band_powers(voltages, sampling_rate=100):
     power_spectrum = np.abs(fft_values[:N//2])**2 / N
     
     # Define frequency bands (in Hz)
-    # Note: With 78 Hz sampling, Nyquist = 39 Hz
-    # Gamma band limited to avoid aliasing
+    # With 250 Hz sampling, Nyquist = 125 Hz
+    # Analysis up to 100 Hz is safe, beyond that is mostly noise
     bands = {
         'delta': (0.5, 4),
         'theta': (4, 8),
         'alpha': (8, 13),
         'beta': (13, 30),
-        'gamma': (30, 50)  # Limited by Nyquist frequency
+        'gamma': (30, 100)  # Can go higher with 250 Hz sampling
     }
     
     # Calculate power in each band
@@ -134,8 +134,8 @@ def calculate_band_powers(voltages, sampling_rate=100):
     # Calculate signal quality metrics
     signal_power = np.var(data)  # Signal variance
     
-    # Estimate noise (high frequency content above 50 Hz)
-    noise_indices = np.where(positive_freqs > 50)[0]
+    # Estimate noise (high frequency content above 100 Hz)
+    noise_indices = np.where(positive_freqs > 100)[0]  # ← FIXED
     if len(noise_indices) > 0:
         noise_power = np.sum(power_spectrum[noise_indices])
     else:
@@ -158,8 +158,6 @@ def calculate_band_powers(voltages, sampling_rate=100):
         'snr_db': snr_db,
         'relaxation_score': relaxation_score,
         'attention_score': attention_score,
-        # 'meditation_score': meditation_score,
-        # 'drowsiness_score': drowsiness_score,
         'signal_quality': 'Good' if snr_db > 10 else 'Fair' if snr_db > 5 else 'Poor',
         'dominant_band': max(band_powers.items(), key=lambda x: x[1])[0]
     }

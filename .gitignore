@@ -111,3 +111,4 @@ temp/
 # e.g. EEG device logs, large binary data, or capture files:
 # data/captures/
 # recordings/
+deepanalysis.py
