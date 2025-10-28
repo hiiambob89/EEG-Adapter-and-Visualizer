@@ -354,6 +354,10 @@
             <button class="start" id="startBtn" onclick="startStream()">Start Streaming</button>
             <button class="stop" id="stopBtn" onclick="stopStream()" disabled>Stop Streaming</button>
             <button class="start" id="recordBtn" onclick="toggleRecording()" disabled>🔴 Start Recording CSV</button>
+            <label style="margin-left: 20px; cursor: pointer; color: #00ff88; font-weight: bold;">
+                <input type="checkbox" id="alertsToggle" onclick="toggleAlerts()" style="margin-right: 5px; cursor: pointer;">
+                Enable Focus Alerts
+            </label>
         </div>
 
         <div class="channel-selector">
@@ -507,6 +511,7 @@
         let csvData = [];
         let recordingStartTime = null;
         let latestBandPowers = null; // Store latest band analysis for CSV (spectral power)
+        let alertsEnabled = false; // Focus alerts disabled by default
         
         // Time-window averaging for CSV export (like the app does)
         const CSV_WINDOW_MS = 80; // 80ms windows = 12.5 samples/sec (matches app output)
@@ -692,6 +697,21 @@
             event.target.classList.add('active');
         }
 
+        function toggleAlerts() {
+            alertsEnabled = document.getElementById('alertsToggle').checked;
+            console.log(alertsEnabled ? '🔔 Focus alerts enabled' : '🔕 Focus alerts disabled');
+            
+            // If disabling alerts, hide any active indicators and stop audio
+            if (!alertsEnabled) {
+                document.getElementById('lockedInBanner').classList.remove('show');
+                document.getElementById('notLockedIndicator').classList.remove('show');
+                if (motivationAudio && !motivationAudio.paused) {
+                    motivationAudio.pause();
+                    motivationAudio.currentTime = 0;
+                }
+            }
+        }
+
         function handleStatus(data) {
             const statusEl = document.getElementById('status');
             
@@ -788,9 +808,16 @@
                     console.log('🔥 LOCKED IN!');
                 }
                 
-                focusMetric.classList.add('locked-in');
-                lockedInBanner.classList.add('show');
-                notLockedIndicator.classList.remove('show');
+                // Only show banner if alerts are enabled
+                if (alertsEnabled) {
+                    focusMetric.classList.add('locked-in');
+                    lockedInBanner.classList.add('show');
+                    notLockedIndicator.classList.remove('show');
+                } else {
+                    focusMetric.classList.remove('locked-in');
+                    lockedInBanner.classList.remove('show');
+                    notLockedIndicator.classList.remove('show');
+                }
                 
                 // Stop audio when locked in
                 if (motivationAudio && !motivationAudio.paused) {
@@ -820,15 +847,28 @@
                     console.log('⚠ Low focus - need motivation');
                 }
                 
-                focusMetric.classList.remove('locked-in');
-                lockedInBanner.classList.remove('show');
-                notLockedIndicator.classList.add('show');
-                
-                // Play motivation audio ONLY in low focus state
-                if (motivationAudio && motivationAudio.paused) {
-                    motivationAudio.play().catch(e => {
-                        console.log('Audio autoplay blocked - click anywhere to enable');
-                    });
+                // Only show warning and play audio if alerts are enabled
+                if (alertsEnabled) {
+                    focusMetric.classList.remove('locked-in');
+                    lockedInBanner.classList.remove('show');
+                    notLockedIndicator.classList.add('show');
+                    
+                    // Play motivation audio ONLY in low focus state
+                    if (motivationAudio && motivationAudio.paused) {
+                        motivationAudio.play().catch(e => {
+                            console.log('Audio autoplay blocked - click anywhere to enable');
+                        });
+                    }
+                } else {
+                    focusMetric.classList.remove('locked-in');
+                    lockedInBanner.classList.remove('show');
+                    notLockedIndicator.classList.remove('show');
+                    
+                    // Stop audio if alerts disabled
+                    if (motivationAudio && !motivationAudio.paused) {
+                        motivationAudio.pause();
+                        motivationAudio.currentTime = 0;
+                    }
                 }
             }
 

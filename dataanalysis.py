@@ -5,6 +5,11 @@ from scipy.signal import butter, filtfilt
 from tkinter import Tk, filedialog
 
 # -----------------------------
+# Configuration
+# -----------------------------
+MINUTES_PER_PERIOD = 1  # How many minutes in each analysis period
+
+# -----------------------------
 # Helper: Bandpass filter
 # -----------------------------
 def bandpass(data, lowcut, highcut, fs, order=4):
@@ -58,9 +63,9 @@ for df_use in [df, filtered_df]:
 # -----------------------------
 # Period analysis
 # -----------------------------
-num_periods = 4
 total_time = df['Time (min)'].max()
-period_duration = total_time / num_periods
+period_duration = MINUTES_PER_PERIOD
+num_periods = int(np.ceil(total_time / period_duration))
 
 def analyze(df_use, label="Raw"):
     print(f"\n\n===== {label} DATA ANALYSIS =====")
@@ -95,13 +100,23 @@ filtered_stats = analyze(filtered_df, label="Filtered")
 # -----------------------------
 # Plotting
 # -----------------------------
+# Define consistent colors for each band
+band_colors = {
+    'Delta': '#1f77b4',   # Blue
+    'Theta': '#ff7f0e',   # Orange
+    'Alpha': '#2ca02c',   # Green
+    'Beta': '#d62728',    # Red
+    'Gamma': '#9467bd',   # Purple
+    'SMR': '#8c564b'      # Brown
+}
+
 def plot_bands(df_use, title="EEG Bands", normalize=True):
     plt.figure(figsize=(12,6))
     for band in bands:
         y = df_use[f'{band}_abs'].values
         if normalize:
             y = y / (np.max(y)+1e-10)
-        plt.plot(df_use['Time (min)'], y, label=band)
+        plt.plot(df_use['Time (min)'], y, label=band, color=band_colors[band])
     plt.xlabel("Time (min)")
     plt.ylabel("Normalized Amplitude" if normalize else "µV")
     plt.title(title)
@@ -111,6 +126,63 @@ def plot_bands(df_use, title="EEG Bands", normalize=True):
 
 plot_bands(df, title="Raw EEG Bands (Normalized)")
 plot_bands(filtered_df, title="Filtered EEG Bands (Normalized)")
+
+# -----------------------------
+# Separate Raw and Filtered plots with consistent coloring
+# -----------------------------
+def plot_raw_separate(df_raw, normalize=True):
+    """Plot raw data only"""
+    plt.figure(figsize=(14,6))
+    
+    for band in bands:
+        raw = df_raw[f'{band}_abs'].values
+        if normalize:
+            raw = raw / (np.max(raw)+1e-10)
+        
+        # Compute mean and std over small rolling window for smoothness
+        window = 50
+        raw_mean = pd.Series(raw).rolling(window, min_periods=1).mean()
+        raw_std  = pd.Series(raw).rolling(window, min_periods=1).std()
+        
+        t = df_raw['Time (min)']
+        
+        # Raw line + envelope with consistent color
+        plt.plot(t, raw_mean, label=f"{band}", linestyle='-', color=band_colors[band])
+        plt.fill_between(t, raw_mean-raw_std, raw_mean+raw_std, alpha=0.2, color=band_colors[band])
+    
+    plt.xlabel("Time (min)")
+    plt.ylabel("Normalized Amplitude" if normalize else "µV")
+    plt.title("Raw EEG Bands (with Rolling Mean & Std)")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+def plot_filtered_separate(df_filt, normalize=True):
+    """Plot filtered data only"""
+    plt.figure(figsize=(14,6))
+    
+    for band in bands:
+        filt = df_filt[f'{band}_abs'].values
+        if normalize:
+            filt = filt / (np.max(filt)+1e-10)
+        
+        # Compute mean and std over small rolling window for smoothness
+        window = 50
+        filt_mean = pd.Series(filt).rolling(window, min_periods=1).mean()
+        filt_std  = pd.Series(filt).rolling(window, min_periods=1).std()
+        
+        t = df_filt['Time (min)']
+        
+        # Filtered line + envelope with consistent color
+        plt.plot(t, filt_mean, label=f"{band}", linestyle='-', color=band_colors[band])
+        plt.fill_between(t, filt_mean-filt_std, filt_mean+filt_std, alpha=0.2, color=band_colors[band])
+    
+    plt.xlabel("Time (min)")
+    plt.ylabel("Normalized Amplitude" if normalize else "µV")
+    plt.title("Filtered EEG Bands (with Rolling Mean & Std)")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 # -----------------------------
 # Overlay raw vs filtered plot
@@ -134,13 +206,13 @@ def plot_raw_vs_filtered(df_raw, df_filt, normalize=True):
         
         t = df_raw['Time (min)']
         
-        # Raw line + envelope
-        plt.plot(t, raw_mean, label=f"{band} Raw", linestyle='-')
-        plt.fill_between(t, raw_mean-raw_std, raw_mean+raw_std, alpha=0.2)
+        # Raw line + envelope with consistent color
+        plt.plot(t, raw_mean, label=f"{band} Raw", linestyle='-', color=band_colors[band], alpha=0.7)
+        plt.fill_between(t, raw_mean-raw_std, raw_mean+raw_std, alpha=0.15, color=band_colors[band])
         
-        # Filtered line + envelope
-        plt.plot(t, filt_mean, label=f"{band} Filtered", linestyle='--')
-        plt.fill_between(t, filt_mean-filt_std, filt_mean+filt_std, alpha=0.2)
+        # Filtered line + envelope with consistent color (dashed)
+        plt.plot(t, filt_mean, label=f"{band} Filtered", linestyle='--', color=band_colors[band])
+        plt.fill_between(t, filt_mean-filt_std, filt_mean+filt_std, alpha=0.15, color=band_colors[band])
     
     plt.xlabel("Time (min)")
     plt.ylabel("Normalized Amplitude" if normalize else "µV")
@@ -149,6 +221,8 @@ def plot_raw_vs_filtered(df_raw, df_filt, normalize=True):
     plt.grid(True)
     plt.show()
 
-# Call it
+# Call all plotting functions
+plot_raw_separate(df)
+plot_filtered_separate(filtered_df)
 plot_raw_vs_filtered(df, filtered_df)
 
