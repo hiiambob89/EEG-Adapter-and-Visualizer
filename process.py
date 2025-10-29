@@ -10,7 +10,7 @@ class EEGBuffer:
     Buffer for accumulating EEG samples across multiple packets
     Manages separate buffers for each channel
     """
-    def __init__(self, buffer_duration=4.0, sampling_rate=78.0):
+    def __init__(self, buffer_duration=4.0, sampling_rate=83.33):
         """
         Args:
             buffer_duration: Duration in seconds to buffer
@@ -51,7 +51,7 @@ class EEGBuffer:
         results = {}
         for ch in [0, 1, 2]:
             voltages = self.get_channel_data(ch)
-            if len(voltages) >= 156:  # Minimum for good analysis
+            if len(voltages) >= 167:  # Minimum for good analysis at 83.33 Hz
                 results[ch] = calculate_band_powers(voltages, self.sampling_rate)
         
         return results
@@ -68,88 +68,64 @@ class EEGBuffer:
 
 
 
-def calculate_band_powers(voltages, sampling_rate=250):  # ← FIXED
+import numpy as np
+from scipy.signal import butter, filtfilt, welch
+
+def calculate_band_powers(voltages, sampling_rate=83.33):
     """
-    Calculate brainwave band powers using FFT
+    Calculate brainwave band powers using Welch's method with bandpass filtering.
     
     Args:
-        voltages: List of voltage values in microvolts
-        sampling_rate: Sampling rate in Hz (250 Hz for Sereni Brain)
+        voltages: List or array of voltage values (µV)
+        sampling_rate: Per-channel sampling rate in Hz (default 83.33 Hz)
     
     Returns:
-        Dictionary with band powers and metrics
+        Dictionary with band powers, ratios, and attention/relaxation metrics
     """
-    # Convert to numpy array and remove DC offset
     data = np.array(voltages)
-    data = data - np.mean(data)
+    data = data - np.mean(data)  # Remove DC offset
     
-    # Apply Hamming window to reduce spectral leakage
-    window = np.hamming(len(data))
-    data_windowed = data * window
+    # --- Bandpass filter 1-40 Hz (adjusted for 83.33 Hz Nyquist of 41.665 Hz) ---
+    def butter_bandpass(lowcut, highcut, fs, order=4):
+        nyq = 0.5 * fs
+        low = lowcut / nyq
+        high = highcut / nyq
+        b, a = butter(order, [low, high], btype='band')
+        return b, a
+
+    b, a = butter_bandpass(1, 40, sampling_rate)
+    filtered_data = filtfilt(b, a, data)
     
-    # Perform FFT
-    N = len(data)
-    fft_values = fft(data_windowed)
-    fft_freqs = fftfreq(N, 1/sampling_rate)
+    # --- Welch PSD ---
+    f, Pxx = welch(filtered_data, fs=sampling_rate, nperseg=256, noverlap=128)
     
-    # Get positive frequencies only
-    positive_freqs = fft_freqs[:N//2]
-    power_spectrum = np.abs(fft_values[:N//2])**2 / N
-    
-    # Define frequency bands (in Hz)
-    # With 250 Hz sampling, Nyquist = 125 Hz
-    # Analysis up to 100 Hz is safe, beyond that is mostly noise
+    # Define frequency bands
     bands = {
         'delta': (0.5, 4),
         'theta': (4, 8),
         'alpha': (8, 13),
         'beta': (13, 30),
-        'gamma': (30, 100)  # Can go higher with 250 Hz sampling
+        'gamma': (30, 39)
     }
     
-    # Calculate power in each band
+    # Calculate band powers
     band_powers = {}
-    for band_name, (low_freq, high_freq) in bands.items():
-        # Find indices for this frequency band
-        band_indices = np.where((positive_freqs >= low_freq) & (positive_freqs <= high_freq))[0]
-        
-        if len(band_indices) > 0:
-            # Sum power in this band
-            band_power = np.sum(power_spectrum[band_indices])
-            band_powers[band_name] = band_power
-        else:
-            band_powers[band_name] = 0.0
+    for band, (low, high) in bands.items():
+        idx = np.where((f >= low) & (f <= high))[0]
+        band_powers[band] = np.sum(Pxx[idx]) if len(idx) > 0 else 0.0
     
-    # Calculate total power
     total_power = sum(band_powers.values())
+    band_ratios = {band: (power / total_power)*100 if total_power>0 else 0.0 
+                   for band, power in band_powers.items()}
     
-    # Calculate percentage ratios
-    band_ratios = {}
-    for band_name, power in band_powers.items():
-        if total_power > 0:
-            band_ratios[band_name] = (power / total_power) * 100
-        else:
-            band_ratios[band_name] = 0.0
-    
-    # Calculate signal quality metrics
-    signal_power = np.var(data)  # Signal variance
-    
-    # Estimate noise (high frequency content above 100 Hz)
-    noise_indices = np.where(positive_freqs > 100)[0]  # ← FIXED
-    if len(noise_indices) > 0:
-        noise_power = np.sum(power_spectrum[noise_indices])
-    else:
-        noise_power = 0.01  # Small value to avoid division by zero
-    
-    # Signal-to-Noise Ratio (in dB)
+    # Signal quality (variance)
+    signal_power = np.var(filtered_data)
+    noise_power = np.sum(Pxx[f>100]) if np.any(f>100) else 1e-6
     snr_db = 10 * np.log10(signal_power / (noise_power + 1e-10))
     
-    # Relaxation score (high alpha, low beta)
-    alpha_beta_ratio = band_powers['alpha'] / (band_powers['beta'] + 1e-10)
-    relaxation_score = min(100, alpha_beta_ratio * 20)  # Scale to 0-100
-    
-    # Attention/Focus score (high beta, moderate alpha)
-    attention_score = min(100, (band_powers['beta'] / (band_powers['alpha'] + band_powers['theta'] + 1e-10)) * 30)
+    # Relaxation & attention scores
+    relaxation_score = min(100, (band_powers['alpha'] / (band_powers['beta'] + 1e-10)) * 20)
+    attention_score = min(100, (band_powers['beta'] + band_powers['gamma']) / (band_powers['alpha'] + band_powers['theta'] + 1e-10) * 30)
     
     return {
         'band_powers': band_powers,
@@ -161,6 +137,7 @@ def calculate_band_powers(voltages, sampling_rate=250):  # ← FIXED
         'signal_quality': 'Good' if snr_db > 10 else 'Fair' if snr_db > 5 else 'Poor',
         'dominant_band': max(band_powers.items(), key=lambda x: x[1])[0]
     }
+
 
 
 def analyze_eeg_packet(packet_data):
@@ -188,12 +165,12 @@ def analyze_eeg_packet(packet_data):
     channel_analysis = {}
     for ch, voltages in channels.items():
         # Need enough samples for meaningful frequency analysis
-        # At 78 Hz, need at least 2 seconds = 156 samples
-        if len(voltages) >= 156:
-            analysis = calculate_band_powers(voltages)
+        # At 83.33 Hz, need at least 2 seconds = 167 samples
+        if len(voltages) >= 167:
+            analysis = calculate_band_powers(voltages, sampling_rate=83.33)
             channel_analysis[ch] = analysis
         else:
-            print(f"Channel {ch}: Only {len(voltages)} samples (need 156+ for analysis)")
+            print(f"Channel {ch}: Only {len(voltages)} samples (need 167+ for analysis)")
     
     return channel_analysis
 
