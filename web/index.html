@@ -362,12 +362,12 @@
 
         <div style="text-align: center; margin-bottom: 20px;">
             <label style="color: #00ff88; font-weight: bold; margin-right: 10px;">
-                CSV Sample Rate: <span id="sampleRateValue">83.33</span> Hz
+                CSV Sample Rate: <span id="sampleRateValue">250</span> Hz
             </label>
-            <input type="range" id="sampleRateSlider" min="1" max="83.33" value="83.33" step="0.01"
+            <input type="range" id="sampleRateSlider" min="1" max="250" value="250" 
                    style="width: 300px; vertical-align: middle; cursor: pointer;"
                    oninput="updateSampleRate(this.value)">
-            <span style="color: #8892a0; margin-left: 10px; font-size: 0.9em;">(1 Hz = 1 sample/sec, 83.33 Hz = max per-channel rate)</span>
+            <span style="color: #8892a0; margin-left: 10px; font-size: 0.9em;">(1 Hz = 1 sample/sec, 250 Hz = native rate)</span>
         </div>
 
         <div class="channel-selector">
@@ -422,7 +422,7 @@
                 <div class="chart-container mini" id="betaChart"></div>
             </div>
             <div class="card mini">
-                <h2>Gamma (30-40 Hz)</h2>
+                <h2>Gamma (30-41 Hz)</h2>
                 <div class="chart-container mini" id="gammaChart"></div>
             </div>
             
@@ -457,7 +457,7 @@
         // This allows us to extract filtered voltage values per sample (like the official app)
         
         class ButterworthBandpass {
-            constructor(lowFreq, highFreq, sampleRate = 250) {
+            constructor(lowFreq, highFreq, sampleRate = 83.33) {
                 this.lowFreq = lowFreq;
                 this.highFreq = highFreq;
                 this.sampleRate = sampleRate;
@@ -518,8 +518,8 @@
         let isLockedIn = false;
         let motivationAudio = null;
         let isRecording = false;
-        let csvSampleRate = 83.33; // Hz - user configurable (1-83.33 Hz, per-channel rate)
-        let csvSampleInterval = 12; // ms - calculated from sample rate (1000/83.33 = 12ms)
+        let csvSampleRate = 250; // Hz - user configurable (1-250 Hz)
+        let csvSampleInterval = 4; // ms - calculated from sample rate (1000/250 = 4ms)
         let csvDataPowers = [];  // Band powers (µV²) - spectral analysis
         let csvDataFiltered = []; // Filtered voltages (µV) - time-domain
         let csvDataRaw = [];      // Raw EEG voltages (µV) - full sampling rate
@@ -531,9 +531,10 @@
         let latestFocusRelax = null; // Store latest focus/relax scores
         let alertsEnabled = false; // Focus alerts disabled by default
         
-        // Time-window averaging for CSV export - uses csvSampleInterval
-        let currentWindowStart = 0;
-        let windowSamples = {
+        // Time-window averaging for filtered and band power CSVs (12ms accumulation)
+        const FILTERED_WINDOW_MS = 12; // 12ms windows for filtered/band power averaging
+        let filteredWindowStart = 0;
+        let filteredWindowSamples = {
             raw: [],
             delta: [],
             theta: [],
@@ -558,7 +559,7 @@
                     theta: new ButterworthBandpass(4, 8),
                     alpha: new ButterworthBandpass(8, 13),
                     beta: new ButterworthBandpass(13, 30),
-                    gamma: new ButterworthBandpass(30, 38),
+                    gamma: new ButterworthBandpass(30, 41),
                     smr: new ButterworthBandpass(12, 15)
                 };
             }
@@ -656,8 +657,8 @@
                 csvDataRaw = [];
                 lastRawSampleTime = 0;
                 rawSampleCounter = 0;
-                currentWindowStart = 0;
-                windowSamples = { raw: [], delta: [], theta: [], alpha: [], beta: [], gamma: [], smr: [] };
+                filteredWindowStart = 0;
+                filteredWindowSamples = { raw: [], delta: [], theta: [], alpha: [], beta: [], gamma: [], smr: [] };
                 
                 // Reset all filters to avoid initial transients
                 for (let ch = 0; ch < 3; ch++) {
@@ -725,48 +726,13 @@
                 console.log(`📊 Downloaded filtered voltages CSV: ${csvDataFiltered.length} samples`);
             }
             
-            // Download Raw EEG CSV (decimated to user-selected rate)
+            // Download Raw EEG CSV (full sampling rate, unfiltered)
             if (csvDataRaw.length > 0) {
                 const headerRaw = 'Practice Timestamp (ms),Channel 0 (µV),Channel 1 (µV),Channel 2 (µV)\n';
-                
-                // Sort by timestamp
+                // Sort by timestamp and convert to CSV rows
                 csvDataRaw.sort((a, b) => a.timestamp - b.timestamp);
-                
-                // Decimate to match selected sample rate
-                // Group samples by time windows and keep only complete rows (all 3 channels present)
-                const decimated = [];
-                let targetTime = 0;
-                
-                while (targetTime <= csvDataRaw[csvDataRaw.length - 1].timestamp) {
-                    // Find all samples within this time window (±2ms tolerance)
-                    const samplesInWindow = csvDataRaw.filter(row => 
-                        Math.abs(row.timestamp - targetTime) < csvSampleInterval / 2
-                    );
-                    
-                    // Aggregate all channel values in this window
-                    const aggregated = {
-                        timestamp: targetTime,
-                        ch0: '',
-                        ch1: '',
-                        ch2: ''
-                    };
-                    
-                    for (const sample of samplesInWindow) {
-                        if (sample.ch0) aggregated.ch0 = sample.ch0;
-                        if (sample.ch1) aggregated.ch1 = sample.ch1;
-                        if (sample.ch2) aggregated.ch2 = sample.ch2;
-                    }
-                    
-                    // Only add if we have at least one channel populated
-                    if (aggregated.ch0 || aggregated.ch1 || aggregated.ch2) {
-                        decimated.push(aggregated);
-                    }
-                    
-                    targetTime += csvSampleInterval;
-                }
-                
-                const csvRows = decimated.map(row => 
-                    `${row.timestamp.toFixed(2)},${row.ch0 || ''},${row.ch1 || ''},${row.ch2 || ''}`
+                const csvRows = csvDataRaw.map(row => 
+                    `${row.timestamp.toFixed(3)},${row.ch0 || ''},${row.ch1 || ''},${row.ch2 || ''}`
                 );
                 const csvRaw = headerRaw + csvRows.join('\n');
                 
@@ -780,7 +746,7 @@
                 document.body.removeChild(aRaw);
                 URL.revokeObjectURL(urlRaw);
                 
-                console.log(`📊 Downloaded raw EEG CSV: ${decimated.length} samples at ${csvSampleRate.toFixed(2)} Hz`);
+                console.log(`📊 Downloaded raw EEG CSV: ${csvDataRaw.length} samples`);
             }
             
             if (csvDataPowers.length === 0 && csvDataFiltered.length === 0 && csvDataRaw.length === 0) {
@@ -795,10 +761,10 @@
         }
 
         function updateSampleRate(rate) {
-            csvSampleRate = parseFloat(rate);
+            csvSampleRate = parseInt(rate);
             csvSampleInterval = 1000 / csvSampleRate; // Calculate interval in ms
-            document.getElementById('sampleRateValue').textContent = csvSampleRate.toFixed(2);
-            console.log(`📊 CSV sample rate set to ${csvSampleRate.toFixed(2)} Hz (${csvSampleInterval.toFixed(2)}ms interval)`);
+            document.getElementById('sampleRateValue').textContent = csvSampleRate;
+            console.log(`📊 CSV sample rate set to ${csvSampleRate} Hz (${csvSampleInterval.toFixed(3)}ms interval)`);
         }
 
         function toggleAlerts() {
@@ -841,21 +807,34 @@
                     // Calculate theoretical timestamp for this sample based on 250 Hz total rate
                     // Each sample arrives at ~4ms intervals (1000ms / 250Hz = 4ms)
                     const sampleTimestamp = rawSampleCounter * 4; // 4ms per sample at 250 Hz
-                    rawSampleCounter++; // Increment for next sample
                     
-                    // Always add sample to a row (we'll decimate later)
-                    // Find or create row for this exact timestamp
-                    let row = csvDataRaw.find(r => Math.abs(r.timestamp - sampleTimestamp) < 2); // Within 2ms
-                    if (!row) {
-                        row = {
-                            timestamp: sampleTimestamp,
-                            ch0: '',
-                            ch1: '',
-                            ch2: ''
-                        };
-                        csvDataRaw.push(row);
+                    // Check if we should save this raw sample based on user-selected rate
+                    const shouldSaveRaw = sampleTimestamp >= lastRawSampleTime + csvSampleInterval;
+                    
+                    if (shouldSaveRaw) {
+                        // Save this sample to raw CSV with all 3 channels
+                        // Find or create row for this timestamp
+                        const row = csvDataRaw.find(r => r.timestamp === sampleTimestamp);
+                        if (row) {
+                            row[`ch${sample.channel}`] = sample.voltage_uv.toFixed(3);
+                        } else {
+                            const newRow = {
+                                timestamp: sampleTimestamp,
+                                ch0: '',
+                                ch1: '',
+                                ch2: ''
+                            };
+                            newRow[`ch${sample.channel}`] = sample.voltage_uv.toFixed(3);
+                            csvDataRaw.push(newRow);
+                        }
+                        
+                        // Update last save time if this is the latest
+                        if (sampleTimestamp > lastRawSampleTime) {
+                            lastRawSampleTime = sampleTimestamp;
+                        }
                     }
-                    row[`ch${sample.channel}`] = sample.voltage_uv.toFixed(2);
+                    
+                    rawSampleCounter++; // Increment for next sample
                     
                     // Process filtered data only for current selected channel
                     if (sample.channel === currentChannel) {
@@ -871,35 +850,35 @@
                         const gammaFiltered = filters.gamma.filter(rawVoltage);
                         const smrFiltered = filters.smr.filter(rawVoltage);
                         
-                        // Add samples to current window
-                        windowSamples.raw.push(rawVoltage);
-                        windowSamples.delta.push(deltaFiltered);
-                        windowSamples.theta.push(thetaFiltered);
-                        windowSamples.alpha.push(alphaFiltered);
-                        windowSamples.beta.push(betaFiltered);
-                        windowSamples.gamma.push(gammaFiltered);
-                        windowSamples.smr.push(smrFiltered);
+                        // Add samples to current window for filtered/band power averaging
+                        filteredWindowSamples.raw.push(rawVoltage);
+                        filteredWindowSamples.delta.push(deltaFiltered);
+                        filteredWindowSamples.theta.push(thetaFiltered);
+                        filteredWindowSamples.alpha.push(alphaFiltered);
+                        filteredWindowSamples.beta.push(betaFiltered);
+                        filteredWindowSamples.gamma.push(gammaFiltered);
+                        filteredWindowSamples.smr.push(smrFiltered);
                         
-                        // Check if we've completed a time window
-                        if (timestamp >= currentWindowStart + csvSampleInterval) {
+                        // Check if we've completed a 12ms time window for filtered/band power export
+                        if (timestamp >= filteredWindowStart + FILTERED_WINDOW_MS) {
                             // Average all samples in the window
                             const avg = (arr) => arr.reduce((sum, val) => sum + val, 0) / arr.length;
                             
-                            if (windowSamples.raw.length > 0) {
+                            if (filteredWindowSamples.raw.length > 0) {
                                 // Create FILTERED VOLTAGES CSV row with averaged values
-                                const rowFiltered = `${currentWindowStart.toFixed(2)},${avg(windowSamples.raw).toFixed(2)},${avg(windowSamples.delta).toFixed(2)},${avg(windowSamples.theta).toFixed(2)},${avg(windowSamples.alpha).toFixed(2)},${avg(windowSamples.beta).toFixed(2)},${avg(windowSamples.gamma).toFixed(2)},${avg(windowSamples.smr).toFixed(2)}`;
+                                const rowFiltered = `${filteredWindowStart.toFixed(3)},${avg(filteredWindowSamples.raw).toFixed(3)},${avg(filteredWindowSamples.delta).toFixed(3)},${avg(filteredWindowSamples.theta).toFixed(3)},${avg(filteredWindowSamples.alpha).toFixed(3)},${avg(filteredWindowSamples.beta).toFixed(3)},${avg(filteredWindowSamples.gamma).toFixed(3)},${avg(filteredWindowSamples.smr).toFixed(3)}`;
                                 csvDataFiltered.push(rowFiltered);
                                 
                                 // Create BAND POWERS CSV row (if we have analysis data)
                                 if (latestBandPowers && latestBandRatios && latestFocusRelax) {
-                                    const rowPowers = `${currentWindowStart.toFixed(2)},${latestBandPowers.delta.toFixed(2)},${latestBandPowers.theta.toFixed(2)},${latestBandPowers.alpha.toFixed(2)},${latestBandPowers.beta.toFixed(2)},${latestBandPowers.gamma.toFixed(2)},${latestBandRatios.delta.toFixed(2)},${latestBandRatios.theta.toFixed(2)},${latestBandRatios.alpha.toFixed(2)},${latestBandRatios.beta.toFixed(2)},${latestBandRatios.gamma.toFixed(2)},${latestFocusRelax.relax.toFixed(2)},${latestFocusRelax.focus.toFixed(2)}`;
+                                    const rowPowers = `${filteredWindowStart.toFixed(3)},${latestBandPowers.delta.toFixed(3)},${latestBandPowers.theta.toFixed(3)},${latestBandPowers.alpha.toFixed(3)},${latestBandPowers.beta.toFixed(3)},${latestBandPowers.gamma.toFixed(3)},${latestBandRatios.delta.toFixed(3)},${latestBandRatios.theta.toFixed(3)},${latestBandRatios.alpha.toFixed(3)},${latestBandRatios.beta.toFixed(3)},${latestBandRatios.gamma.toFixed(3)},${latestFocusRelax.relax.toFixed(3)},${latestFocusRelax.focus.toFixed(3)}`;
                                     csvDataPowers.push(rowPowers);
                                 }
                             }
                             
                             // Move to next window
-                            currentWindowStart += csvSampleInterval;
-                            windowSamples = { raw: [], delta: [], theta: [], alpha: [], beta: [], gamma: [], smr: [] };
+                            filteredWindowStart += FILTERED_WINDOW_MS;
+                            filteredWindowSamples = { raw: [], delta: [], theta: [], alpha: [], beta: [], gamma: [], smr: [] };
                         }
                     }
                 }

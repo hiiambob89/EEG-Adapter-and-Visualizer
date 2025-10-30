@@ -105,7 +105,7 @@ def calculate_band_powers(voltages, sampling_rate=83.33):
         'theta': (4, 8),
         'alpha': (8, 13),
         'beta': (13, 30),
-        'gamma': (30, 39)
+        'gamma': (30, 41)
     }
     
     # Calculate band powers

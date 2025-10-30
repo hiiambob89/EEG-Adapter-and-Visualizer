@@ -1,6 +1,6 @@
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from scipy.signal import butter, filtfilt
 from tkinter import Tk, filedialog
 
@@ -8,14 +8,22 @@ from tkinter import Tk, filedialog
 # Configuration
 # -----------------------------
 MINUTES_PER_PERIOD = 1  # How many minutes in each analysis period
+FS_FALLBACK = 83.33     # Fallback sampling rate if detection fails
 
 # -----------------------------
 # Helper: Bandpass filter
 # -----------------------------
 def bandpass(data, lowcut, highcut, fs, order=4):
     nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
+    if nyq <= 0:
+        raise ValueError("Sampling rate must be positive for bandpass filter")
+
+    low = max(lowcut, 0.1) / nyq
+    high_freq = min(highcut, nyq * 0.99)
+    if high_freq <= lowcut:
+        high_freq = min(lowcut * 1.25, nyq * 0.99)
+    high = high_freq / nyq
+
     b, a = butter(order, [low, high], btype='band')
     return filtfilt(b, a, data)
 
@@ -28,12 +36,42 @@ if not csv_path:
     raise SystemExit("No CSV selected")
 
 df = pd.read_csv(csv_path)
-df['Practice Timestamp (ms)'] = pd.to_numeric(df['Practice Timestamp (ms)'], errors='coerce')
-df = df.fillna(0)
-df['Time (min)'] = df['Practice Timestamp (ms)'] / 60000
+df = df.replace(r'^\s*$', np.nan, regex=True)
+
+time_col = None
+for candidate in ['Practice Timestamp (ms)', 'timestamp_ms', 'timestamp', 'Time (s)', 'Time (min)']:
+    if candidate in df.columns:
+        time_col = candidate
+        break
+
+if time_col is None:
+    raise SystemExit("No timestamp column found in CSV")
+
+time_numeric = pd.to_numeric(df[time_col], errors='coerce')
+
+if 'min' in time_col.lower():
+    df['Time (min)'] = time_numeric
+    df['Time (s)'] = time_numeric * 60.0
+elif 'ms' in time_col.lower():
+    df['Time (s)'] = time_numeric / 1000.0
+    df['Time (min)'] = df['Time (s)'] / 60.0
+else:
+    df['Time (s)'] = time_numeric
+    df['Time (min)'] = df['Time (s)'] / 60.0
+
+df = df.sort_values('Time (s)').reset_index(drop=True)
+
+time_diffs = df['Time (s)'].diff().dropna()
+time_diffs = time_diffs[time_diffs > 0]
+if not time_diffs.empty:
+    fs_estimate = 1.0 / time_diffs.median()
+else:
+    fs_estimate = FS_FALLBACK
+
+print(f"Estimated sampling rate: {fs_estimate:.2f} Hz")
 
 bands = ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma', 'SMR']
-fs = 234  # Verified sampling rate
+fs = fs_estimate
 
 # -----------------------------
 # Apply filter
@@ -51,14 +89,22 @@ for band in bands:
         'SMR': (12, 15)
     }
     low, high = ranges[band]
-    filtered_df[col] = bandpass(df[col].values, low, high, fs)
+    series = pd.to_numeric(df[col], errors='coerce')
+    filled = series.interpolate(limit_direction='both')
+    if filled.isna().all():
+        filtered_df[col] = series
+        continue
+    filtered_values = bandpass(filled.values, low, high, fs)
+    filtered_values = np.where(series.isna(), np.nan, filtered_values)
+    filtered_df[col] = filtered_values
 
 # -----------------------------
 # Compute absolute values
 # -----------------------------
 for df_use in [df, filtered_df]:
     for band in bands:
-        df_use[f'{band}_abs'] = df_use[f'{band} Brainwave Voltage(µV)'].abs()
+        vals = pd.to_numeric(df_use[f'{band} Brainwave Voltage(µV)'], errors='coerce')
+        df_use[f'{band}_abs'] = vals.abs()
 
 # -----------------------------
 # Period analysis
@@ -77,20 +123,29 @@ def analyze(df_use, label="Raw"):
         print(f"\nPeriod {i+1}: {start:.1f}-{end:.1f} min ({len(period_df)} samples)")
         stats = {}
         for band in bands:
-            vals = period_df[f'{band}_abs'].values
-            mean_val = np.mean(vals)
-            std_val = np.std(vals)
-            max_val = np.max(vals)
+            vals = pd.to_numeric(period_df[f'{band}_abs'], errors='coerce')
+            if vals.dropna().empty:
+                stats[band] = np.nan
+                print(f"  {band:6}: insufficient data")
+                continue
+            mean_val = np.nanmean(vals)
+            std_val = np.nanstd(vals)
+            max_val = np.nanmax(vals)
             stats[band] = mean_val
             print(f"  {band:6}: Mean={mean_val:.3f} µV  Std={std_val:.3f}  Max={max_val:.3f}")
         # Ratios
         epsilon = 1e-10
-        theta_beta = np.mean(period_df['Theta_abs'] / (period_df['Beta_abs'] + epsilon))
-        delta_alpha = np.mean(period_df['Delta_abs'] / (period_df['Alpha_abs'] + epsilon))
+        theta_vals = pd.to_numeric(period_df['Theta_abs'], errors='coerce')
+        beta_vals = pd.to_numeric(period_df['Beta_abs'], errors='coerce')
+        delta_vals = pd.to_numeric(period_df['Delta_abs'], errors='coerce')
+        alpha_vals = pd.to_numeric(period_df['Alpha_abs'], errors='coerce')
+
+        theta_beta = np.nanmean(theta_vals / (beta_vals + epsilon)) if not theta_vals.dropna().empty else np.nan
+        delta_alpha = np.nanmean(delta_vals / (alpha_vals + epsilon)) if not delta_vals.dropna().empty else np.nan
         stats['theta_beta'] = theta_beta
         stats['delta_alpha'] = delta_alpha
-        print(f"  Theta/Beta ratio: {theta_beta:.3f}")
-        print(f"  Delta/Alpha ratio: {delta_alpha:.3f}")
+        print(f"  Theta/Beta ratio: {theta_beta:.3f}" if not np.isnan(theta_beta) else "  Theta/Beta ratio: n/a")
+        print(f"  Delta/Alpha ratio: {delta_alpha:.3f}" if not np.isnan(delta_alpha) else "  Delta/Alpha ratio: n/a")
         period_data.append(stats)
     return period_data
 
@@ -135,7 +190,7 @@ def plot_raw_separate(df_raw, normalize=True):
     plt.figure(figsize=(14,6))
     
     for band in bands:
-        raw = df_raw[f'{band}_abs'].values
+        raw = pd.to_numeric(df_raw[f'{band}_abs'], errors='coerce').interpolate(limit_direction='both').fillna(0).values
         if normalize:
             raw = raw / (np.max(raw)+1e-10)
         
@@ -162,7 +217,7 @@ def plot_filtered_separate(df_filt, normalize=True):
     plt.figure(figsize=(14,6))
     
     for band in bands:
-        filt = df_filt[f'{band}_abs'].values
+        filt = pd.to_numeric(df_filt[f'{band}_abs'], errors='coerce').interpolate(limit_direction='both').fillna(0).values
         if normalize:
             filt = filt / (np.max(filt)+1e-10)
         
@@ -191,8 +246,8 @@ def plot_raw_vs_filtered(df_raw, df_filt, normalize=True):
     plt.figure(figsize=(14,7))
     
     for band in bands:
-        raw = df_raw[f'{band}_abs'].values
-        filt = df_filt[f'{band}_abs'].values
+        raw = pd.to_numeric(df_raw[f'{band}_abs'], errors='coerce').interpolate(limit_direction='both').fillna(0).values
+        filt = pd.to_numeric(df_filt[f'{band}_abs'], errors='coerce').interpolate(limit_direction='both').fillna(0).values
         if normalize:
             raw = raw / (np.max(raw)+1e-10)
             filt = filt / (np.max(filt)+1e-10)

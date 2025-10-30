@@ -132,11 +132,14 @@ if not csv_path:
 
 print(f"Loading {csv_path}...")
 df = pd.read_csv(csv_path)
+df = df.replace(r'^\s*$', np.nan, regex=True)
 
 # -----------------------------
 # CRITICAL: Detect and calculate actual sampling rate
 # -----------------------------
 print("\n=== DETECTING SAMPLING RATE ===")
+
+FS = FS_DEFAULT
 
 # Find timestamp column
 timestamp_col = None
@@ -155,6 +158,7 @@ if timestamp_col:
     
     # Calculate actual sampling rate from timestamps
     time_diffs = df['Time (s)'].diff().dropna()
+    time_diffs = time_diffs[time_diffs > 0]
     median_diff = time_diffs.median()
     calculated_fs = 1.0 / median_diff if median_diff > 0 else FS_DEFAULT
     
@@ -171,7 +175,6 @@ if timestamp_col:
         print(f"⚠ Calculated FS seems wrong, using default FS = {FS} Hz")
 else:
     # Fallback: assume uniform sampling
-    FS = FS_DEFAULT
     df['Time (s)'] = np.arange(len(df)) / FS
     print(f"⚠ No timestamp column found, assuming FS = {FS} Hz")
 
@@ -213,19 +216,29 @@ if len(channels) == 0:
 # -----------------------------
 print("\n=== PREPARING CHANNEL DATA ===")
 channel_data = {}
+missing_masks = {}
 for ch in channels:
-    raw = pd.to_numeric(df[ch], errors='coerce').fillna(0).values
-    channel_data[ch] = raw
-    
-    # Diagnostics
-    non_zero = np.sum(raw != 0)
-    mean_val = np.nanmean(raw)
-    std_val = np.nanstd(raw)
+    series = pd.to_numeric(df[ch], errors='coerce')
+    missing_masks[ch] = series.isna().values
+    filled = series.interpolate(limit_direction='both')
+    if filled.isna().all():
+        filled = series.fillna(0)
+    else:
+        filled = filled.fillna(method='ffill').fillna(method='bfill').fillna(0)
+
+    channel_data[ch] = filled.values
+
+    observed = series.dropna()
+    mean_val = float(observed.mean()) if not observed.empty else float('nan')
+    std_val = float(observed.std()) if not observed.empty else float('nan')
     print(f"{ch}:")
-    print(f"  Non-zero samples: {non_zero}/{len(raw)} ({100*non_zero/len(raw):.1f}%)")
-    print(f"  Mean: {mean_val:.2f} µV")
-    print(f"  Std: {std_val:.2f} µV")
-    print(f"  Range: [{np.nanmin(raw):.2f}, {np.nanmax(raw):.2f}] µV")
+    print(f"  Observed samples: {len(observed)}/{len(series)} ({100*len(observed)/max(len(series),1):.1f}%)")
+    if not observed.empty:
+        print(f"  Mean: {mean_val:.2f} µV")
+        print(f"  Std: {std_val:.2f} µV")
+        print(f"  Range: [{observed.min():.2f}, {observed.max():.2f}] µV")
+    else:
+        print("  No observed samples (all values missing)")
 
 # -----------------------------
 # Create band envelope columns for all channels
@@ -387,31 +400,118 @@ for i in range(num_periods):
     start_min = i * MINUTES_PER_PERIOD
     end_min = (i + 1) * MINUTES_PER_PERIOD
     period_df = df[(df['Time (min)'] >= start_min) & (df['Time (min)'] < end_min)]
+    start_sample = int(start_min * 60 * FS)
+    end_sample = int(end_min * 60 * FS)
     
-    print(f"\nPeriod {i+1}: {start_min:.1f}-{end_min:.1f} min ({len(period_df)} samples)")
+    print(f"\n━━━ Period {i+1}: {start_min:.1f}-{end_min:.1f} min ({len(period_df)} samples) ━━━")
     
     stats = {}
+    
+    # Band power statistics
     for band in ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma', 'SMR']:
         env_cols = [c for c in df.columns if c.endswith(f"__{band}_env")]
         if len(env_cols) > 0:
-            # Average across all channels
             vals = np.mean([period_df[c].values for c in env_cols], axis=0)
         else:
             vals = np.zeros(len(period_df))
         
         mean_val = np.nanmean(vals) if len(vals) > 0 else 0.0
-        std_val = np.nanstd(vals) if len(vals) > 0 else 0.0
-        max_val = np.nanmax(vals) if len(vals) > 0 else 0.0
         stats[band] = float(mean_val)
-        print(f"  {band:6s}: Mean={mean_val:.4f} µV  Std={std_val:.4f}  Max={max_val:.4f}")
     
     # Ratios
     theta_beta = stats['Theta'] / (stats['Beta'] + 1e-10)
     delta_alpha = stats['Delta'] / (stats['Alpha'] + 1e-10)
     stats['theta_beta_ratio'] = float(theta_beta)
     stats['delta_alpha_ratio'] = float(delta_alpha)
-    print(f"  Theta/Beta ratio: {theta_beta:.6f}")
-    print(f"  Delta/Alpha ratio: {delta_alpha:.6f}")
+    
+    # Gamma burst statistics for this period
+    gamma_bursts_in_period = []
+    for ch_bursts in results['gamma_bursts']:
+        ch = ch_bursts['channel']
+        for burst in ch_bursts['bursts']:
+            if start_sample <= burst['start'] < end_sample:
+                gamma_bursts_in_period.append(burst)
+    
+    burst_count = len(gamma_bursts_in_period)
+    if burst_count > 0:
+        peak_zs = [b['peak_z'] for b in gamma_bursts_in_period]
+        durations = [b['duration_ms'] for b in gamma_bursts_in_period]
+        stats['gamma_burst_count'] = burst_count
+        stats['gamma_burst_avg_peak_z'] = float(np.mean(peak_zs))
+        stats['gamma_burst_peak_z_variance'] = float(np.var(peak_zs))
+        stats['gamma_burst_avg_duration_ms'] = float(np.mean(durations))
+    else:
+        stats['gamma_burst_count'] = 0
+        stats['gamma_burst_avg_peak_z'] = 0.0
+        stats['gamma_burst_peak_z_variance'] = 0.0
+        stats['gamma_burst_avg_duration_ms'] = 0.0
+    
+    # PAC statistics for this period (average across epochs in this period)
+    period_epochs = [e for e in results['epochs'] 
+                     if start_min <= e['start_time_s']/60 < end_min]
+    
+    if period_epochs:
+        pac_theta_vals = [e['pac'].get('Theta', 0.0) for e in period_epochs if 'pac' in e]
+        pac_alpha_vals = [e['pac'].get('Alpha', 0.0) for e in period_epochs if 'pac' in e]
+        
+        stats['pac_theta_mean'] = float(np.mean(pac_theta_vals)) if pac_theta_vals else 0.0
+        stats['pac_alpha_mean'] = float(np.mean(pac_alpha_vals)) if pac_alpha_vals else 0.0
+        stats['pac_theta_variance'] = float(np.var(pac_theta_vals)) if pac_theta_vals else 0.0
+        stats['pac_alpha_variance'] = float(np.var(pac_alpha_vals)) if pac_alpha_vals else 0.0
+    else:
+        stats['pac_theta_mean'] = 0.0
+        stats['pac_alpha_mean'] = 0.0
+        stats['pac_theta_variance'] = 0.0
+        stats['pac_alpha_variance'] = 0.0
+    
+    # PLV statistics for this period (if multi-channel)
+    if results.get('plv'):
+        plv_vals_in_period = []
+        for pair, plv_list in results['plv'].items():
+            if len(plv_list) > i:
+                # Get PLV values for epochs in this period
+                for ei, e in enumerate(period_epochs):
+                    if ei < len(plv_list):
+                        plv_vals_in_period.append(plv_list[ei])
+        
+        if plv_vals_in_period:
+            stats['plv_mean'] = float(np.mean(plv_vals_in_period))
+            stats['plv_variance'] = float(np.var(plv_vals_in_period))
+        else:
+            stats['plv_mean'] = 0.0
+            stats['plv_variance'] = 0.0
+    else:
+        stats['plv_mean'] = 0.0
+        stats['plv_variance'] = 0.0
+    
+    # Coherence statistics for this period (if multi-channel)
+    if results.get('coherence'):
+        coh_vals_in_period = []
+        for pair, coh_list in results['coherence'].items():
+            if len(coh_list) > i:
+                for ei, e in enumerate(period_epochs):
+                    if ei < len(coh_list):
+                        coh_vals_in_period.append(coh_list[ei])
+        
+        if coh_vals_in_period:
+            stats['coherence_mean'] = float(np.mean(coh_vals_in_period))
+            stats['coherence_variance'] = float(np.var(coh_vals_in_period))
+        else:
+            stats['coherence_mean'] = 0.0
+            stats['coherence_variance'] = 0.0
+    else:
+        stats['coherence_mean'] = 0.0
+        stats['coherence_variance'] = 0.0
+    
+    # Concise summary print
+    print(f"  Bands: δ={stats['Delta']:.2f} θ={stats['Theta']:.2f} α={stats['Alpha']:.2f} β={stats['Beta']:.2f} γ={stats['Gamma']:.2f} SMR={stats['SMR']:.2f} µV")
+    print(f"  Ratios: θ/β={theta_beta:.3f} δ/α={delta_alpha:.3f}")
+    print(f"  Gamma bursts: n={burst_count}, avg_peak_z={stats['gamma_burst_avg_peak_z']:.2f}, var={stats['gamma_burst_peak_z_variance']:.2f}, avg_dur={stats['gamma_burst_avg_duration_ms']:.1f}ms")
+    print(f"  PAC: θ→γ={stats['pac_theta_mean']:.3f}±{np.sqrt(stats['pac_theta_variance']):.3f}, α→γ={stats['pac_alpha_mean']:.3f}±{np.sqrt(stats['pac_alpha_variance']):.3f}")
+    if results.get('plv'):
+        print(f"  PLV: {stats['plv_mean']:.3f}±{np.sqrt(stats['plv_variance']):.3f}")
+    if results.get('coherence'):
+        print(f"  Coherence: {stats['coherence_mean']:.3f}±{np.sqrt(stats['coherence_variance']):.3f}")
     
     period_data.append(stats)
 

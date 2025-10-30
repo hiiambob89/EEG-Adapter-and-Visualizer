@@ -74,15 +74,16 @@ def notification_handler(sender, data):
         if packet['packet_type'] == 2 and packet['samples']:
             timestamp = datetime.now().isoformat()
             
-            # Add samples to buffers
+            # Add samples to buffers (per-channel, preserving temporal accuracy)
             for sample in packet['samples']:
                 ch = sample['channel']
                 if ch not in channel_buffers:
                     channel_buffers[ch] = []
                 channel_buffers[ch].append(sample['voltage_uv'])
                 
-                # Keep last 6 seconds (250 Hz * 6 = 1500 samples)
-                if len(channel_buffers[ch]) > 1500:
+                # Keep last 8 seconds per channel (83.33 Hz * 8 = ~667 samples per channel)
+                # Need at least 256 samples for Welch with nperseg=256
+                if len(channel_buffers[ch]) > 667:
                     channel_buffers[ch].pop(0)
             
             # Send raw sample update
@@ -100,9 +101,9 @@ def notification_handler(sender, data):
                 # Analyze each channel
                 analysis_results = {}
                 for ch, voltages in channel_buffers.items():
-                    if len(voltages) >= 250:  # At least 1 second of data
+                    if len(voltages) >= 256:  # Need at least 256 samples for Welch nperseg=256
                         try:
-                            analysis = calculate_band_powers(voltages)
+                            analysis = calculate_band_powers(voltages, sampling_rate=83.33)
                             analysis_results[ch] = {
                                 'band_powers': analysis['band_powers'],
                                 'band_ratios': analysis['band_ratios'],
