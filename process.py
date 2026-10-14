@@ -71,7 +71,7 @@ class EEGBuffer:
 import numpy as np
 from scipy.signal import butter, filtfilt, welch
 
-def calculate_band_powers(voltages, sampling_rate=83.33):
+def calculate_band_powers(voltages, sampling_rate=83.33, use_welch=True):  # use_welch: accepted for callers; Welch is always used
     """
     Calculate brainwave band powers using Welch's method with bandpass filtering.
     
@@ -213,7 +213,7 @@ def print_eeg_analysis(channel_analysis):
     print(f"\n{'='*70}\n")
 
 
-def decode_serenibrain_packet(hex_string):
+def decode_serenibrain_packet(hex_string, adc_scale=100.0):
     """
     Decode Serenibrain Bluetooth EEG packets
     
@@ -285,8 +285,8 @@ def decode_serenibrain_packet(hex_string):
             # With 3 channels, samples might be: Ch0, Ch1, Ch2, Ch0, Ch1, Ch2...
             channel = sample_idx % num_channels
             
-            # Voltage conversion - try scale of 100
-            voltage_uv = value / 100.0
+            # Voltage conversion - try scale of 100 (the true counts-to-µV factor is still unknown)
+            voltage_uv = value / adc_scale
             
             samples.append({
                 'sample_number': sample_num,
