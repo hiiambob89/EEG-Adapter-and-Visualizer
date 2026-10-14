@@ -180,11 +180,15 @@ async def stream_eeg_data(device_address, characteristic_uuid=None, write_char_u
         adc_scale=100.0
     )
     
-    # Stream control commands (discovered from BT log analysis)
-    CMD_START_STREAM = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x03, 0x00, 0x05])  # "CTRL" + start
-    CMD_STOP_STREAM = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x03, 0x00, 0x03])   # "CTRL" + stop
-    CMD_KEEP_ALIVE = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x05, 0x00, 0x02])    # "CTRL" + keepalive
-    
+    # Stream control commands: ASCII "CTRL" + two big-endian 16-bit words (group, code).
+    # Meanings as the vendor app uses them (see PROTOCOL notes in the PR / README):
+    CMD_GET_INFO = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x03, 0x00, 0x05])     # device info -> a type-1 DATA packet
+    CMD_SELF_CHECK = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x04, 0x00, 0x01])   # self-check
+    CMD_START_STREAM = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x03, 0x00, 0x03]) # start acquisition
+    CMD_STOP_STREAM = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x03, 0x00, 0x04])  # stop acquisition
+    # CTRL 00 05 00 nn is not a keep-alive but an event marker: nn shows up in the 4th byte of the next sample.
+    # The stream runs without any keep-alive.
+
     def notification_handler(sender, data):
         """Called when BLE notification arrives"""
         processor.process_packet(data)
@@ -259,35 +263,19 @@ async def stream_eeg_data(device_address, characteristic_uuid=None, write_char_u
             print(f"{'='*70}")
             
             try:
-                # Command 1: INIT/START
-                print("\n[1/4] Sending INIT command (CTRL 00 03 00 05)...")
+                print("\n[1/3] Sending GET_INFO (CTRL 00 03 00 05)...")
+                await client.write_gatt_char(write_char_uuid, CMD_GET_INFO)
+                await asyncio.sleep(0.1)
+                print("\n[2/3] Sending SELF_CHECK (CTRL 00 04 00 01)...")
+                await client.write_gatt_char(write_char_uuid, CMD_SELF_CHECK)
+                await asyncio.sleep(0.1)
+                print("\n[3/3] Sending START (CTRL 00 03 00 03)...")
                 await client.write_gatt_char(write_char_uuid, CMD_START_STREAM)
                 await asyncio.sleep(0.1)
-                print("      ✓ INIT command sent")
-                
-                # Command 2: PLAY/RESUME
-                CMD_PLAY = bytearray([0x43, 0x54, 0x52, 0x4C, 0x00, 0x04, 0x00, 0x01])
-                print("\n[2/4] Sending PLAY command (CTRL 00 04 00 01)...")
-                await client.write_gatt_char(write_char_uuid, CMD_PLAY)
-                await asyncio.sleep(0.1)
-                print("      ✓ PLAY command sent")
-                
-                # Command 3: STOP/RESET (counterintuitive but REQUIRED!)
-                print("\n[3/4] Sending STOP/RESET command (CTRL 00 03 00 03)...")
-                await client.write_gatt_char(write_char_uuid, CMD_STOP_STREAM)
-                await asyncio.sleep(0.1)
-                print("      ✓ STOP/RESET command sent")
-                
-                # Command 4: KEEP-ALIVE (triggers actual streaming)
-                print("\n[4/4] Sending KEEP-ALIVE command (CTRL 00 05 00 02)...")
-                await client.write_gatt_char(write_char_uuid, CMD_KEEP_ALIVE)
-                await asyncio.sleep(0.1)
-                print("      ✓ KEEP-ALIVE command sent")
-                
                 print(f"\n{'='*70}")
                 print("✓ INITIALIZATION COMPLETE - Waiting for data stream...")
                 print(f"{'='*70}\n")
-                
+
             except Exception as e:
                 print(f"\n✗ Error during initialization: {e}")
                 print("Continuing anyway - device may still stream...")
@@ -307,19 +295,8 @@ async def stream_eeg_data(device_address, characteristic_uuid=None, write_char_u
         else:
             print(f"\n✓ SUCCESS! Receiving data ({processor.packet_count} packets so far)")
         
-        # Start keep-alive loop (send every 1 second to maintain stream)
+        # No keep-alive needed: the headband streams until STOP or disconnect.
         keep_alive_task = None
-        if write_char_uuid:
-            async def send_keep_alive():
-                try:
-                    while True:
-                        await asyncio.sleep(1.0)
-                        await client.write_gatt_char(write_char_uuid, CMD_KEEP_ALIVE, response=False)
-                except:
-                    pass
-            
-            keep_alive_task = asyncio.create_task(send_keep_alive())
-            print("[OK] Keep-alive loop started (1s interval)\n")
         
         print(f"{'='*70}")
         print("STREAMING EEG DATA - Press Ctrl+C to stop")
